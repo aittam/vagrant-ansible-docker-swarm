@@ -1,0 +1,19 @@
+---
+# Main Configuration File
+#
+# This config file store the variables used both in the
+# Vagrantfile and in all playbooks.
+
+# Cluster configuration
+num_managers: 3
+num_workers: 2
+# Cluster Network conf
+## It supports only /24 at the moment
+first_manager_ip: "198.18.1.2"
+## Docker network prefix
+ip_base: "198.18.1."
+# VMs Configuration
+vm_cpus: 1
+vm_mem: 512
+# Services configuration
+http_exposed_port: 80

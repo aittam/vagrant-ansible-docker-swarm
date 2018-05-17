@@ -1,0 +1,160 @@
+---
+
+- name: Find docker ips
+  hosts: all
+  vars_files:
+    - global-config.yml
+  tasks:
+    - name: parse all ipv4
+      set_fact:
+        docker_ip: "{{ item }}"
+      when: "ip_base in item"
+      with_items: "{{ ansible_all_ipv4_addresses }}"
+
+- name: Install docker on all hosts
+  hosts: all
+  vars_files:
+    - global-config.yml
+  become: true
+  vars:
+    manager_deps:
+      - "apt-transport-https"
+      - "ca-certificates"
+      - "curl"
+      - "software-properties-common"
+      - "python3-pip"
+    pip_packages:
+      - "docker-compose"
+    docker_repo_url: "https://download.docker.com/linux/ubuntu"
+    docker_repo_release: "stable"
+    docker_key_file: "https://download.docker.com/linux/ubuntu/gpg"
+    docker_key_id: "0EBFCD88"
+
+  tasks:
+    - name: Install packages in managers
+      apt: name={{ item }} state=present update_cache=yes cache_valid_time=3600
+      with_items:  "{{ manager_deps }}"
+      when: "'managers' in group_names"
+
+
+    - name: Install python packages in managers
+      pip: name={{ item }} state=present
+      with_items:  "{{ pip_packages }}"
+      when: "'managers' in group_names"
+
+     # disabled since at the moment there's no
+     # ubuntu 18.04 package available
+    - name: Add docker repository apt key
+      apt_key:
+          url: "{{ docker_key_file }}"
+          id: "{{ docker_key_id }}"
+          state: present
+      when: false
+
+     # disabled since at the moment there's no
+     # ubuntu 18.04 package available
+    - name: Add docker repository
+      apt_repository:
+          repo: "deb [arch=amd64] {{ docker_repo_url }} {{ ansible_distribution_release|lower }} {{ docker_repo_release}}"
+          state: present
+      when: false
+
+    - name:  Install docker
+      apt:
+        #name: "docker-ce"
+        name: "docker.io"
+        state: present
+        update_cache: yes
+
+    - name: Add user "{{ ansible_user }}" to group docker
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    - name: determine swarm status
+      shell: >
+        docker info | grep -E '^Swarm: ' | cut -d ' ' -f2
+      register: swarm_status
+      changed_when: false
+
+- name: Create Docker Swarm cluster on the first Manager
+  hosts: first-manager
+  vars_files:
+    - global-config.yml
+  become: true
+  tasks:
+
+    - name: initialize swarm cluster on first manager
+      shell: >
+        docker swarm init --advertise-addr={{ docker_ip }}:2377
+      when: "'inactive' in swarm_status.stdout_lines"
+      run_once: true
+      register: swarm_status
+
+    - name: retrieve swarm manager token
+      shell: docker swarm join-token -q manager
+      register: swarm_manager_token
+      changed_when: false
+
+    - name: retrieve swarm worker token
+      shell: docker swarm join-token -q worker
+      register: swarm_worker_token
+      changed_when: false
+
+
+- name: Populate Docker Swarm cluster
+  hosts: all:!first-manager
+  vars_files:
+    - global-config.yml
+  become: true
+  vars:
+    manager_token: "{{ hostvars[groups['first-manager'][0]]['swarm_manager_token']['stdout'] }}"
+    worker_token: "{{ hostvars[groups['first-manager'][0]]['swarm_worker_token']['stdout'] }}"
+  tasks:
+    - name: Join manager nodes to cluster
+      shell: >
+        docker swarm join
+        --advertise-addr={{ docker_ip }}:2377
+        --token={{ manager_token }}
+        {{ hostvars[groups['first-manager'][0]]['docker_ip'] }}:2377
+      when: "'managers' in group_names and \
+             'inactive' in swarm_status.stdout_lines"
+
+    - name: Join worker nodes to cluster
+      shell: >
+        docker swarm join
+        --token={{ worker_token }}
+        {{ hostvars[groups['first-manager'][0]]['docker_ip'] }}:2377
+      when: "'inactive' in swarm_status.stdout_lines"
+
+    - name: Add cron job to init docker at every reboot
+      cron:
+        name: "Initialise docker after reboot"
+        special_time: reboot
+        job: "docker ps"
+
+- name: Install Netdata Monitoring platform
+  hosts: all
+  vars_files:
+    - global-config.yml
+  tasks:
+
+  - name: Check if netdata is already installed
+    stat:
+      path: /usr/sbin/netdata
+    register: netdata_stat
+
+  - name: Download Netdata install script
+    get_url:
+      url:  https://my-netdata.io/kickstart.sh
+      dest: /tmp/kickstart_netdata.sh
+      mode: 0750
+    when: "netdata_stat is defined and \
+           netdata_stat.stat.exists == False"
+
+  - name: Install netdata real-time monitoring
+    shell: /tmp/kickstart_netdata.sh all --dont-wait
+    args:
+      creates: /usr/sbin/netdata
+
