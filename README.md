@@ -13,7 +13,7 @@
 
 ## Setup Infrastructure
 
-By default it's going to build a 3 node swarm cluster. Three manager and two workers, those numbers can be changed in the 'global-config.yml'.
+By default it's going to build a 5 nodes swarm cluster. Three manager and two workers, those numbers can be changed in the 'global-config.yml'.
 In order to have a cluster that's resilient to faults and crashes you need to have redundancy on the masters. An odd number(>=3) of masters is needed and suggested. The actual amount depends on the number of faults you want to tolerate.
 
     vagrant up
