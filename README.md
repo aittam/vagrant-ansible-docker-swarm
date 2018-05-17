@@ -1,4 +1,4 @@
-# Docker Swarm cluster provisione with Ansible and Vagrant 
+# Docker Swarm cluster provisioned with Ansible and Vagrant 
 
 
 ## Requirements
